@@ -143,7 +143,7 @@ with tab2:
                     st.success("Salvo com sucesso!")
                     st.rerun()
 
-# === ABA 3: IMPORTAR NUBANK (SIMPLIFICADO) ===
+# === ABA 3: IMPORTAR NUBANK (CORRIGIDO) ===
 with tab3:
     st.header("📂 Importar Fatura Nubank")
     st.markdown("Arraste o arquivo CSV da fatura aqui. O sistema classifica tudo automaticamente.")
@@ -157,7 +157,7 @@ with tab3:
             
             # Loop linha a linha do CSV do Nubank
             for index, row in df_nubank.iterrows():
-                # 1. Tratamento de Data
+                # 1. Tratamento de Data (Gera String inicialmente)
                 try:
                     data_obj = pd.to_datetime(row['date'])
                     data_formatada = data_obj.strftime("%Y-%m-%d")
@@ -168,7 +168,7 @@ with tab3:
                 cat_nubank = str(row.get('category', '')).title()
                 titulo = str(row.get('title', '')).title()
                 
-                # Pula pagamento de fatura (não é gasto real)
+                # Pula pagamento de fatura
                 if 'Pagamento' in titulo and 'Fatura' in titulo:
                     continue 
 
@@ -197,6 +197,12 @@ with tab3:
             df_previa = pd.DataFrame(novos_dados)
 
             if not df_previa.empty:
+                # --- A CORREÇÃO ESTÁ AQUI ---
+                # Convertemos a coluna 'data' de TEXTO para DATA DE VERDADE
+                # Assim o editor de calendário funciona sem dar erro
+                df_previa['data'] = pd.to_datetime(df_previa['data'])
+                # ----------------------------
+
                 st.info("👇 Confira e edite se necessário. Tudo será salvo como gasto do 'Casal'.")
 
                 # Tabela Editável
@@ -211,22 +217,25 @@ with tab3:
                         ),
                         "descricao": st.column_config.TextColumn("Descrição"),
                         "valor": st.column_config.NumberColumn("Valor R$", format="R$ %.2f"),
-                        "data": st.column_config.DateColumn("Data", format="DD/MM/YYYY"),
+                        "data": st.column_config.DateColumn("Data", format="DD/MM/YYYY"), # Agora isso vai funcionar
                         "tipo": st.column_config.TextColumn("Tipo", disabled=True)
                     },
                     hide_index=True,
-                    num_rows="dynamic" # Permite apagar linhas
+                    num_rows="dynamic"
                 )
                 
                 st.divider()
 
                 if st.button("✅ Confirmar Importação"):
-                    # Define "Casal" para todas as linhas importadas
+                    # Define "Casal" para todas as linhas
                     df_editado['quem'] = "Casal"
                     
+                    # Garante que a data volte a ser texto simples para salvar no CSV sem hora (00:00:00)
+                    df_editado['data'] = df_editado['data'].dt.strftime("%Y-%m-%d")
+
                     df_atual = ler_dados()
                     
-                    # Junta e remove duplicatas exatas
+                    # Junta e remove duplicatas
                     df_final = pd.concat([df_atual, df_editado], ignore_index=True)
                     df_final = df_final.drop_duplicates(subset=['data', 'descricao', 'valor'])
                     
