@@ -9,7 +9,7 @@ from datetime import datetime
 st.set_page_config(page_title="Finanças do Casal", layout="wide")
 
 # NOME DO SEU REPOSITÓRIO
-GITHUB_REPO = "klebs/financas-casal"  # <--- CONFIRA SE ESTÁ CERTO
+GITHUB_REPO = "krepss/finandari"  # <--- CONFIRA SE ESTÁ CERTO
 ARQUIVO_CSV = "dados.csv"
 
 # --- 2. FUNÇÕES DE CONEXÃO COM GITHUB ---
