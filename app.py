@@ -12,26 +12,26 @@ st.set_page_config(page_title="Finanças do Casal", layout="wide")
 GITHUB_REPO = "klebs/financas-casal"  # <--- CONFIRA SE ESTÁ CERTO
 ARQUIVO_CSV = "dados.csv"
 
-# --- FUNÇÕES DE CONEXÃO COM GITHUB ---
+# --- 2. FUNÇÕES DE CONEXÃO COM GITHUB ---
 def get_github_repo():
+    """Conecta ao GitHub usando o Token secreto"""
     token = st.secrets["GITHUB_TOKEN"]
     g = Github(token)
     return g.get_repo(GITHUB_REPO)
 
 def ler_dados():
+    """Baixa o CSV do GitHub e transforma em Tabela (DataFrame)"""
     try:
         repo = get_github_repo()
         contents = repo.get_contents(ARQUIVO_CSV)
         csv_data = contents.decoded_content.decode("utf-8")
         return pd.read_csv(StringIO(csv_data))
     except:
+        # Se o arquivo não existir (primeira vez), retorna tabela vazia
         return pd.DataFrame(columns=["data", "descricao", "categoria", "quem", "tipo", "valor"])
 
 def salvar_dataframe_no_git(df_novo_completo):
-    """
-    Salva o DataFrame inteiro de volta no Git.
-    Usado tanto para lançamentos manuais quanto para importação em massa.
-    """
+    """Sobrescreve o CSV no GitHub com os dados atualizados"""
     repo = get_github_repo()
     novo_conteudo = df_novo_completo.to_csv(index=False)
     
@@ -40,13 +40,13 @@ def salvar_dataframe_no_git(df_novo_completo):
         contents = repo.get_contents(ARQUIVO_CSV)
         repo.update_file(
             path=ARQUIVO_CSV,
-            message="Atualização via Streamlit (Lote/Manual)",
+            message="Atualização via App Streamlit",
             content=novo_conteudo,
             sha=contents.sha
         )
         return True
     except:
-        # Se não existe, cria
+        # Se não existe, cria um novo
         try:
             repo.create_file(
                 path=ARQUIVO_CSV,
@@ -58,29 +58,27 @@ def salvar_dataframe_no_git(df_novo_completo):
             st.error(f"Erro ao salvar no Git: {e}")
             return False
 
-# --- INTERFACE ---
+# --- 3. INTERFACE DO SISTEMA ---
 st.title("💰 Finanças do Casal")
 
-# Abas para separar Manual de Importação
+# Criação das Abas
 tab1, tab2, tab3 = st.tabs(["📊 Dashboard", "✍️ Lançar Manual", "📂 Importar Nubank"])
 
-# --- ABA 1: DASHBOARD ---
+# === ABA 1: DASHBOARD ===
 with tab1:
     df = ler_dados()
     
     if not df.empty:
-        # Converter tipos
+        # Garante que os números e datas estão no formato certo
         df['valor'] = pd.to_numeric(df['valor'])
         df['data'] = pd.to_datetime(df['data'])
         
-        # Filtros de Mês (Opcional, mas útil)
-        mes_atual = datetime.now().month
-        
-        # Métricas
+        # Cálculos
         entrada = df[df['tipo'] == 'ENTRADA']['valor'].sum()
         saida = df[df['tipo'] == 'SAIDA']['valor'].sum()
         saldo = entrada - saida
         
+        # Cartões de Resumo
         c1, c2, c3 = st.columns(3)
         c1.metric("Entradas", f"R$ {entrada:,.2f}")
         c2.metric("Saídas", f"R$ {saida:,.2f}")
@@ -88,30 +86,43 @@ with tab1:
         
         st.divider()
         
-        col1, col2 = st.columns(2)
+        # Layout Gráfico + Tabela
+        col1, col2 = st.columns([1, 1])
+        
         with col1:
-            st.subheader("Extrato")
-            st.dataframe(df.sort_values('data', ascending=False), use_container_width=True, hide_index=True)
-            
-        with col2:
             if saida > 0:
-                st.subheader("Gastos por Categoria")
+                st.subheader("Para onde foi o dinheiro?")
                 df_saida = df[df['tipo'] == 'SAIDA']
+                # Gráfico de Rosca
                 fig = px.donut(df_saida, values='valor', names='categoria', hole=0.4)
                 st.plotly_chart(fig, use_container_width=True)
+            else:
+                st.info("Cadastre gastos para ver o gráfico.")
+                
+        with col2:
+            st.subheader("Últimos Lançamentos")
+            # Mostra a tabela ordenada por data (mais recente primeiro)
+            st.dataframe(
+                df.sort_values('data', ascending=False), 
+                use_container_width=True, 
+                hide_index=True
+            )
     else:
-        st.info("Nenhum dado encontrado.")
+        st.info("Nenhum dado encontrado. Use as abas acima para começar!")
 
-# --- ABA 2: LANÇAMENTO MANUAL ---
+# === ABA 2: LANÇAMENTO MANUAL ===
 with tab2:
     st.header("Novo Gasto Avulso")
     with st.form("form_manual", clear_on_submit=True):
-        data = st.date_input("Data", datetime.now())
-        descricao = st.text_input("Descrição")
-        categoria = st.selectbox("Categoria", ["Mercado", "Lazer", "Casa", "Salário", "Transporte", "Outros"])
-        quem = st.selectbox("Quem?", ["Ele", "Ela"])
+        col_form1, col_form2 = st.columns(2)
+        
+        data = col_form1.date_input("Data", datetime.now())
+        descricao = col_form2.text_input("Descrição (Ex: Padaria)")
+        
+        categoria = st.selectbox("Categoria", ["Mercado", "Lazer", "Casa", "Salário", "Transporte", "Saúde", "Contas Fixas", "Outros"])
+        quem = st.selectbox("Quem?", ["Casal", "Ele", "Ela"])
         tipo = st.radio("Tipo", ["SAIDA", "ENTRADA"], horizontal=True)
-        valor = st.number_input("Valor", min_value=0.0, step=0.01, format="%.2f")
+        valor = st.number_input("Valor R$", min_value=0.0, step=0.01, format="%.2f")
         
         if st.form_submit_button("Salvar Manualmente"):
             nova_linha = pd.DataFrame([{
@@ -123,87 +134,108 @@ with tab2:
                 "valor": valor
             }])
             
-            # Carrega o atual, junta com o novo e salva
+            # Carrega dados atuais, junta com o novo e salva
             df_atual = ler_dados()
             df_final = pd.concat([df_atual, nova_linha], ignore_index=True)
             
             with st.spinner("Enviando para o GitHub..."):
                 if salvar_dataframe_no_git(df_final):
-                    st.success("Salvo!")
+                    st.success("Salvo com sucesso!")
                     st.rerun()
 
-# --- ABA 3: IMPORTAR NUBANK ---
+# === ABA 3: IMPORTAR NUBANK (SIMPLIFICADO) ===
 with tab3:
-    st.header("Importar Fatura (CSV)")
-    st.markdown("Baixe o CSV no app do Nubank e solte aqui.")
+    st.header("📂 Importar Fatura Nubank")
+    st.markdown("Arraste o arquivo CSV da fatura aqui. O sistema classifica tudo automaticamente.")
     
-    uploaded_file = st.file_uploader("Escolha o arquivo CSV", type="csv")
-    
-    # Configurações extras para a importação
-    col_config1, col_config2 = st.columns(2)
-    quem_import = col_config1.selectbox("De quem é essa fatura?", ["Ele", "Ela"], key="quem_csv")
-    categoria_padrao = col_config2.selectbox("Categoria Padrão (se não soubermos)", ["Outros", "Mercado", "Lazer"], key="cat_csv")
+    uploaded_file = st.file_uploader("Solte o arquivo CSV aqui", type="csv")
 
     if uploaded_file is not None:
         try:
-            # 1. Lê o CSV do Nubank
-            # O Nubank geralmente usa vírgula como separador, mas pode variar.
             df_nubank = pd.read_csv(uploaded_file)
-            
-            # Mostra uma prévia para o usuário ver se leu certo
-            st.write("Prévia do arquivo do Nubank:", df_nubank.head())
-            
-            # 2. Processa os dados para o formato do nosso App
-            # O Nubank geralmente tem colunas: date, category, title, amount
-            
             novos_dados = []
             
+            # Loop linha a linha do CSV do Nubank
             for index, row in df_nubank.iterrows():
-                # Tenta normalizar a data (Nubank vem YYYY-MM-DD ou DD/MM/YYYY dependendo da versão)
+                # 1. Tratamento de Data
                 try:
-                    data_formatada = pd.to_datetime(row['date']).strftime("%Y-%m-%d")
+                    data_obj = pd.to_datetime(row['date'])
+                    data_formatada = data_obj.strftime("%Y-%m-%d")
                 except:
                     data_formatada = datetime.now().strftime("%Y-%m-%d")
 
-                # Lógica simples de Categoria (Tenta usar a do Nubank ou a padrão)
-                cat_nubank = str(row.get('category', '')).title() # Tenta pegar categoria do Nubank
+                # 2. Tratamento de Texto
+                cat_nubank = str(row.get('category', '')).title()
+                titulo = str(row.get('title', '')).title()
                 
-                # Mapeamento básico (Opcional: Melhore isso com o tempo)
-                cat_final = categoria_padrao
-                if 'Transporte' in cat_nubank or 'Uber' in str(row['title']):
-                    cat_final = 'Transporte'
-                elif 'Mercado' in cat_nubank or 'Supermercado' in cat_nubank:
-                    cat_final = 'Mercado'
-                elif 'Restaurante' in cat_nubank or 'Ifood' in str(row['title']):
-                    cat_final = 'Lazer'
-                
+                # Pula pagamento de fatura (não é gasto real)
+                if 'Pagamento' in titulo and 'Fatura' in titulo:
+                    continue 
+
+                # 3. Inteligência de Categoria
+                cat_sugerida = "Outros"
+                if 'Transporte' in cat_nubank or 'Uber' in titulo or '99' in titulo or 'Posto' in titulo:
+                    cat_sugerida = 'Transporte'
+                elif 'Mercado' in cat_nubank or 'Supermercado' in cat_nubank or 'Assai' in titulo or 'Atacadao' in titulo:
+                    cat_sugerida = 'Mercado'
+                elif 'Restaurante' in cat_nubank or 'Ifood' in titulo or 'Burger' in titulo or 'Pizza' in titulo:
+                    cat_sugerida = 'Lazer'
+                elif 'Serviços' in cat_nubank or 'Streaming' in cat_nubank or 'Netflix' in titulo:
+                    cat_sugerida = 'Contas Fixas'
+                elif 'Saúde' in cat_nubank or 'Farmacia' in titulo or 'Drogasil' in titulo:
+                    cat_sugerida = 'Saúde'
+
+                # Adiciona na lista temporária
                 novos_dados.append({
                     "data": data_formatada,
-                    "descricao": row['title'], # Nubank chama de title
-                    "categoria": cat_final,
-                    "quem": quem_import,
-                    "tipo": "SAIDA", # Fatura de cartão é sempre saída
-                    "valor": float(row['amount']) # Nubank já manda positivo
+                    "descricao": titulo,
+                    "categoria": cat_sugerida,
+                    "tipo": "SAIDA",
+                    "valor": float(row['amount'])
                 })
             
-            df_novos = pd.DataFrame(novos_dados)
+            df_previa = pd.DataFrame(novos_dados)
+
+            if not df_previa.empty:
+                st.info("👇 Confira e edite se necessário. Tudo será salvo como gasto do 'Casal'.")
+
+                # Tabela Editável
+                df_editado = st.data_editor(
+                    df_previa,
+                    column_config={
+                        "categoria": st.column_config.SelectboxColumn(
+                            "Categoria",
+                            width="medium",
+                            options=["Mercado", "Lazer", "Casa", "Transporte", "Saúde", "Contas Fixas", "Outros"],
+                            required=True
+                        ),
+                        "descricao": st.column_config.TextColumn("Descrição"),
+                        "valor": st.column_config.NumberColumn("Valor R$", format="R$ %.2f"),
+                        "data": st.column_config.DateColumn("Data", format="DD/MM/YYYY"),
+                        "tipo": st.column_config.TextColumn("Tipo", disabled=True)
+                    },
+                    hide_index=True,
+                    num_rows="dynamic" # Permite apagar linhas
+                )
+                
+                st.divider()
+
+                if st.button("✅ Confirmar Importação"):
+                    # Define "Casal" para todas as linhas importadas
+                    df_editado['quem'] = "Casal"
+                    
+                    df_atual = ler_dados()
+                    
+                    # Junta e remove duplicatas exatas
+                    df_final = pd.concat([df_atual, df_editado], ignore_index=True)
+                    df_final = df_final.drop_duplicates(subset=['data', 'descricao', 'valor'])
+                    
+                    with st.spinner("Salvando no Git..."):
+                        if salvar_dataframe_no_git(df_final):
+                            st.success(f"Sucesso! {len(df_editado)} gastos importados.")
+                            st.rerun()
+            else:
+                st.warning("O arquivo não tinha transações válidas.")
             
-            st.subheader("Serão importados:")
-            st.dataframe(df_novos)
-            
-            if st.button("Confirmar Importação"):
-                df_atual = ler_dados()
-                
-                # Junta tudo
-                df_final = pd.concat([df_atual, df_novos], ignore_index=True)
-                
-                # Remove duplicatas exatas para não importar 2x a mesma coisa
-                df_final = df_final.drop_duplicates(subset=['data', 'descricao', 'valor', 'quem'])
-                
-                with st.spinner("Salvando montanha de dados no Git..."):
-                    if salvar_dataframe_no_git(df_final):
-                        st.success(f"{len(df_novos)} transações importadas com sucesso!")
-                        st.rerun()
-                        
         except Exception as e:
-            st.error(f"Erro ao ler arquivo: {e}. Verifique se é um CSV do Nubank válido.")
+            st.error(f"Erro ao ler CSV. Detalhe: {e}")
