@@ -1,114 +1,138 @@
 import streamlit as st
 import pandas as pd
-import sqlite3
+from github import Github
+from io import StringIO
 import plotly.express as px
+from datetime import datetime
 
-# --- 1. CONFIGURAÇÃO E BANCO DE DADOS (Tudo aqui!) ---
-st.set_page_config(page_title="Finanças do Casal", layout="wide")
+# --- CONFIGURAÇÕES ---
+st.set_page_config(page_title="Finanças Git", layout="wide")
 
-# Função para conectar no banco (cria sozinho se não existir)
-def get_connection():
-    conn = sqlite3.connect('financas_streamlit.db')
-    return conn
+# NOME DO SEU REPOSITÓRIO (Mude isto!)
+# Formato: "usuario/repositorio"
+GITHUB_REPO = "krepss/finandari" 
+ARQUIVO_CSV = "dados.csv"
 
-# Cria a tabela na primeira vez que rodar
-def init_db():
-    conn = get_connection()
-    cursor = conn.cursor()
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS transacoes (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            data TEXT,
-            descricao TEXT,
-            categoria TEXT,
-            quem TEXT,
-            tipo TEXT,
-            valor REAL
+# --- FUNÇÕES DE CONEXÃO COM GITHUB ---
+def get_github_repo():
+    # Pega o token dos segredos do Streamlit
+    token = st.secrets["GITHUB_TOKEN"]
+    g = Github(token)
+    return g.get_repo(GITHUB_REPO)
+
+def ler_dados():
+    try:
+        repo = get_github_repo()
+        # Tenta pegar o arquivo
+        contents = repo.get_contents(ARQUIVO_CSV)
+        # Decodifica o CSV que vem do Git
+        csv_data = contents.decoded_content.decode("utf-8")
+        return pd.read_csv(StringIO(csv_data))
+    except:
+        # Se o arquivo não existe, retorna DataFrame vazio
+        return pd.DataFrame(columns=["data", "descricao", "categoria", "quem", "tipo", "valor"])
+
+def salvar_no_git(nova_linha_dict):
+    repo = get_github_repo()
+    
+    # 1. Tenta ler o arquivo atual
+    try:
+        contents = repo.get_contents(ARQUIVO_CSV)
+        df_atual = pd.read_csv(StringIO(contents.decoded_content.decode("utf-8")))
+        
+        # Adiciona a nova linha
+        df_novo = pd.concat([df_atual, pd.DataFrame([nova_linha_dict])], ignore_index=True)
+        
+        # Converte para CSV string
+        novo_conteudo = df_novo.to_csv(index=False)
+        
+        # FAZ O UPDATE NO GITHUB (Commit)
+        repo.update_file(
+            path=ARQUIVO_CSV,
+            message="Nova transação via Streamlit",
+            content=novo_conteudo,
+            sha=contents.sha # Precisamos do SHA para provar que estamos editando a versão certa
         )
-    ''')
-    conn.commit()
-    conn.close()
+        return True
+    
+    except Exception as e:
+        # Se o arquivo não existe, cria um novo (Create)
+        df_novo = pd.DataFrame([nova_linha_dict])
+        novo_conteudo = df_novo.to_csv(index=False)
+        
+        try:
+            repo.create_file(
+                path=ARQUIVO_CSV,
+                message="Primeira transação - Criando arquivo",
+                content=novo_conteudo
+            )
+            return True
+        except Exception as erro_criacao:
+            st.error(f"Erro ao salvar: {erro_criacao}")
+            return False
 
-init_db() # Roda a criação do banco
+# --- INTERFACE ---
+st.title("💰 Finanças do Casal (CSV no Git)")
 
-# --- 2. BARRA LATERAL (Inserir Dados) ---
-st.sidebar.header("💸 Nova Transação")
-
-with st.sidebar.form("form_transacao", clear_on_submit=True):
-    data = st.date_input("Data")
-    descricao = st.text_input("Descrição (Ex: Pizza)")
-    categoria = st.selectbox("Categoria", ["Mercado", "Lazer", "Contas Fixas", "Investimento", "Salário"])
+# --- BARRA LATERAL ---
+st.sidebar.header("💸 Lançar Gasto")
+with st.sidebar.form("form_git", clear_on_submit=True):
+    data = st.date_input("Data", datetime.now())
+    descricao = st.text_input("Descrição")
+    categoria = st.selectbox("Categoria", ["Mercado", "Lazer", "Casa", "Salário", "Outros"])
     quem = st.selectbox("Quem?", ["Ele", "Ela"])
     tipo = st.radio("Tipo", ["SAIDA", "ENTRADA"])
-    valor = st.number_input("Valor R$", min_value=0.0, step=0.01, format="%.2f")
+    valor = st.number_input("Valor", min_value=0.0, step=0.01, format="%.2f")
     
-    submitted = st.form_submit_button("Salvar")
+    submitted = st.form_submit_button("Salvar no Git")
     
     if submitted:
-        conn = get_connection()
-        cursor = conn.cursor()
-        cursor.execute('''
-            INSERT INTO transacoes (data, descricao, categoria, quem, tipo, valor)
-            VALUES (?, ?, ?, ?, ?, ?)
-        ''', (data, descricao, categoria, quem, tipo, valor))
-        conn.commit()
-        conn.close()
-        st.sidebar.success("Lançado!")
+        nova_transacao = {
+            "data": data.strftime("%Y-%m-%d"),
+            "descricao": descricao,
+            "categoria": categoria,
+            "quem": quem,
+            "tipo": tipo,
+            "valor": valor
+        }
+        
+        with st.spinner("Conectando ao GitHub... (Isso leva uns 3 segs)"):
+            sucesso = salvar_no_git(nova_transacao)
+            if sucesso:
+                st.success("Salvo e Comitado! 🚀")
+                st.rerun() # Recarrega a página para mostrar o dado novo
 
-# --- 3. DADOS E DASHBOARD ---
-st.title("💰 Finanças do Casal")
-
-# Ler dados do banco
-conn = get_connection()
-df = pd.read_sql("SELECT * FROM transacoes", conn)
-conn.close()
+# --- DASHBOARD ---
+df = ler_dados()
 
 if not df.empty:
-    # Converter coluna de data
-    df['data'] = pd.to_datetime(df['data'])
-    df = df.sort_values(by='data', ascending=False)
-
+    # Converter tipos
+    df['valor'] = pd.to_numeric(df['valor'])
+    
     # Métricas
-    total_entrada = df[df['tipo'] == 'ENTRADA']['valor'].sum()
-    total_saida = df[df['tipo'] == 'SAIDA']['valor'].sum()
-    saldo = total_entrada - total_saida
-
-    col1, col2, col3 = st.columns(3)
-    col1.metric("Entradas", f"R$ {total_entrada:,.2f}", delta_color="normal")
-    col2.metric("Saídas", f"R$ {total_saida:,.2f}", delta_color="inverse")
-    col3.metric("Saldo Final", f"R$ {saldo:,.2f}")
-
+    entrada = df[df['tipo'] == 'ENTRADA']['valor'].sum()
+    saida = df[df['tipo'] == 'SAIDA']['valor'].sum()
+    saldo = entrada - saida
+    
+    c1, c2, c3 = st.columns(3)
+    c1.metric("Entradas", f"R$ {entrada:.2f}")
+    c2.metric("Saídas", f"R$ {saida:.2f}")
+    c3.metric("Saldo", f"R$ {saldo:.2f}")
+    
     st.divider()
-
-    # Layout: Gráfico na esquerda, Tabela na direita
-    col_graf, col_tab = st.columns([1, 1])
-
-    with col_graf:
-        st.subheader("Para onde foi o dinheiro?")
-        # Filtra só as saídas para o gráfico
-        df_saidas = df[df['tipo'] == 'SAIDA']
-        if not df_saidas.empty:
-            fig = px.donut(df_saidas, values='valor', names='categoria', hole=0.4)
-            st.plotly_chart(fig, use_container_width=True)
-        else:
-            st.info("Cadastre saídas para ver o gráfico.")
-
-    with col_tab:
+    
+    # Tabela e Gráfico
+    col1, col2 = st.columns(2)
+    
+    with col1:
         st.subheader("Extrato")
-        # Mostra tabela bonitinha
-        st.dataframe(
-            df[['data', 'descricao', 'categoria', 'quem', 'tipo', 'valor']],
-            hide_index=True,
-            use_container_width=True
-        )
+        st.dataframe(df, use_container_width=True, hide_index=True)
         
-        # Botão para limpar banco (opcional)
-        if st.button("Limpar Todos os Dados"):
-            conn = get_connection()
-            conn.execute("DELETE FROM transacoes")
-            conn.commit()
-            conn.close()
-            st.rerun()
-
+    with col2:
+        if saida > 0:
+            st.subheader("Gastos")
+            df_saida = df[df['tipo'] == 'SAIDA']
+            fig = px.donut(df_saida, values='valor', names='categoria', hole=0.4)
+            st.plotly_chart(fig, use_container_width=True)
 else:
-    st.info("👈 Use a barra lateral para adicionar sua primeira transação!")
+    st.info("Nenhum dado no CSV ainda. Faça o primeiro lançamento!")
