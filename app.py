@@ -20,7 +20,7 @@ def get_github_repo():
     return g.get_repo(GITHUB_REPO)
 
 def ler_dados():
-    """Lê os dados do GitHub. Se der erro, retorna None para não apagar nada."""
+    """Lê os dados do GitHub com proteção contra erro de datas."""
     try:
         repo = get_github_repo()
         try:
@@ -28,28 +28,46 @@ def ler_dados():
             csv_data = contents.decoded_content.decode("utf-8")
             df = pd.read_csv(StringIO(csv_data))
             
-            # Correções de colunas
+            # Garante colunas mínimas
             if 'origem' not in df.columns: df['origem'] = 'Manual'
             if 'quem' not in df.columns: df['quem'] = 'Casal'
+            
+            # --- CORREÇÃO DO ERRO DE DATA ---
             if not df.empty:
-                df['data'] = pd.to_datetime(df['data'])
+                # O comando format='mixed' ensina o pandas a ler datas bagunçadas
+                # errors='coerce' diz: "se não for data de jeito nenhum, deixe em branco (NaT) mas NÃO TRAVE"
+                df['data'] = pd.to_datetime(df['data'], format='mixed', errors='coerce')
+                
+                # Removemos linhas que ficaram com data inválida (pra não sujar o gráfico)
+                df = df.dropna(subset=['data'])
+            # --------------------------------
+            
             return df
             
         except Exception as e:
-            # Se o erro for 404, significa que o arquivo ainda não existe. Tudo bem retornar vazio.
             if "404" in str(e):
                 return pd.DataFrame(columns=["data", "descricao", "categoria", "quem", "tipo", "valor", "origem"])
             else:
-                # Se for outro erro (ex: conexão), retorna None para bloquear o app
-                st.error(f"⚠️ Erro ao conectar no GitHub: {e}. Tente recarregar a página.")
+                st.error(f"⚠️ Erro ao conectar no GitHub: {e}. Tente recarregar.")
                 return None
     except Exception as e:
-        st.error(f"⚠️ Erro crítico de Token ou Conexão: {e}")
+        st.error(f"⚠️ Erro crítico: {e}")
         return None
 
 def salvar_dataframe_no_git(df_novo_completo):
     repo = get_github_repo()
+    
+    # GARANTIA FINAL: Antes de salvar, converte todas as datas para texto simples YYYY-MM-DD
+    # Isso evita que o erro aconteça de novo no futuro
+    if not df_novo_completo.empty:
+        # Se for data mesmo, converte. Se já for string, mantém.
+        try:
+            df_novo_completo['data'] = pd.to_datetime(df_novo_completo['data']).dt.strftime("%Y-%m-%d")
+        except:
+            pass # Se der erro, tenta salvar como está
+            
     novo_conteudo = df_novo_completo.to_csv(index=False)
+    
     try:
         contents = repo.get_contents(ARQUIVO_CSV)
         repo.update_file(path=ARQUIVO_CSV, message="Update via App", content=novo_conteudo, sha=contents.sha)
@@ -68,8 +86,6 @@ st.title("💰 Finanças do Casal")
 # Carrega dados
 df = ler_dados()
 
-# 🔒 TRAVA DE SEGURANÇA
-# Se df for None (deu erro na leitura), o app para aqui e não deixa fazer nada.
 if df is None:
     st.stop()
 
@@ -78,14 +94,12 @@ if df is None:
 # ==========================================
 st.sidebar.header("🔍 Filtros")
 
-# 1. Filtro de Mês
 mes_selecionado = "Todos"
 if not df.empty:
     df['mes_ano'] = df['data'].dt.strftime('%Y-%m')
     lista_meses = sorted(df['mes_ano'].unique(), reverse=True)
     mes_selecionado = st.sidebar.selectbox("Mês:", ["Todos"] + list(lista_meses))
 
-# 2. Gerador de Receita
 st.sidebar.divider()
 st.sidebar.header("📅 Previsão de Receita")
 with st.sidebar.expander("Gerar Renda Recorrente"):
@@ -96,7 +110,6 @@ with st.sidebar.expander("Gerar Renda Recorrente"):
         rec_meses = st.slider("Qtd Meses", 1, 12, 12)
         
         if st.form_submit_button("Gerar"):
-            # RE-LÊ OS DADOS DO GIT PARA GARANTIR
             df_atual = ler_dados() 
             if df_atual is not None:
                 lista_receitas = []
@@ -117,10 +130,8 @@ with st.sidebar.expander("Gerar Renda Recorrente"):
                 
                 df_final = pd.concat([df_atual, pd.DataFrame(lista_receitas)], ignore_index=True)
                 if salvar_dataframe_no_git(df_final):
-                    st.sidebar.success("Gerado!")
-                    time.sleep(1.5); st.rerun()
+                    st.sidebar.success("Gerado!"); time.sleep(1.5); st.rerun()
 
-# Lógica de Filtro
 if mes_selecionado != "Todos":
     df_visualizacao = df[df['mes_ano'] == mes_selecionado]
 else:
@@ -164,8 +175,7 @@ with tab1:
             if st.button("🗑️ APAGAR TUDO"):
                 empty_df = pd.DataFrame(columns=["data", "descricao", "categoria", "quem", "tipo", "valor", "origem"])
                 if salvar_dataframe_no_git(empty_df):
-                    st.success("Limpo!")
-                    time.sleep(2); st.rerun()
+                    st.success("Limpo!"); time.sleep(2); st.rerun()
     else:
         st.info("Nenhum dado.")
 
@@ -182,7 +192,6 @@ with tab2:
         valor = st.number_input("Valor", min_value=0.0, step=0.01, format="%.2f")
         
         if st.form_submit_button("Salvar"):
-            # RE-LÊ OS DADOS DO GIT (Segurança)
             df_atual = ler_dados()
             if df_atual is not None:
                 novo = pd.DataFrame([{
@@ -245,17 +254,19 @@ with tab3:
 
             df_previa = pd.DataFrame(novos_dados)
             if not df_previa.empty:
-                df_previa['data'] = pd.to_datetime(df_previa['data'])
+                # Aqui também usamos 'mixed' para prevenir erros na prévia
+                df_previa['data'] = pd.to_datetime(df_previa['data'], format='mixed', errors='coerce')
+                
                 st.info(f"{len(df_previa)} itens encontrados.")
                 df_editado = st.data_editor(df_previa, column_config={"data":st.column_config.DateColumn("Data", format="DD/MM/YYYY"), "valor":st.column_config.NumberColumn("Valor", format="R$ %.2f")}, hide_index=True, num_rows="dynamic")
                 
                 if st.button("✅ Confirmar"):
-                    # RE-LÊ OS DADOS DO GIT (Segurança Máxima)
                     df_atual = ler_dados()
-                    
                     if df_atual is not None:
                         df_editado['quem'] = "Casal"
                         if 'origem' not in df_editado.columns: df_editado['origem'] = "Importado"
+                        
+                        # Padroniza data antes de juntar
                         df_editado['data'] = df_editado['data'].dt.strftime("%Y-%m-%d")
                         
                         df_final = pd.concat([df_atual, df_editado], ignore_index=True)
