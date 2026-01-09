@@ -59,44 +59,33 @@ df = ler_dados()
 if df is None: st.stop()
 
 # ==========================================
-# 🟣 BARRA LATERAL (CONFIGURAÇÕES E FILTROS)
+# BARRA LATERAL
 # ==========================================
 st.sidebar.header("🔍 Filtros & Ajustes")
 
-# 1. Filtro de Mês
+# Filtro de Mês
 mes_selecionado = "Todos"
 if not df.empty:
     df['mes_ano'] = df['data'].dt.strftime('%Y-%m')
     lista_meses = sorted(df['mes_ano'].unique(), reverse=True)
     mes_selecionado = st.sidebar.selectbox("📅 Mês:", ["Todos"] + list(lista_meses))
 
-# 2. DEFINIÇÃO DE METAS (Agora editável!)
+# Metas
 st.sidebar.divider()
-with st.sidebar.expander("🎯 Configurar Metas (Budget)"):
-    st.caption("Defina os tetos de gasto mensal:")
+with st.sidebar.expander("🎯 Configurar Metas"):
     meta_mercado = st.number_input("Mercado", value=1500.0, step=50.0)
     meta_lazer = st.number_input("Lazer", value=800.0, step=50.0)
     meta_transporte = st.number_input("Transporte", value=500.0, step=50.0)
     meta_fixas = st.number_input("Contas Fixas", value=2000.0, step=50.0)
-    meta_casa = st.number_input("Casa/Manutenção", value=500.0, step=50.0)
-    
-    # Dicionário de metas dinâmico
-    metas = {
-        "Mercado": meta_mercado, "Lazer": meta_lazer, "Transporte": meta_transporte,
-        "Contas Fixas": meta_fixas, "Casa": meta_casa
-    }
+    meta_casa = st.number_input("Casa", value=500.0, step=50.0)
+    metas = {"Mercado": meta_mercado, "Lazer": meta_lazer, "Transporte": meta_transporte, "Contas Fixas": meta_fixas, "Casa": meta_casa}
 
-# 3. BACKUP
+# Backup
 st.sidebar.divider()
 csv_csv = df.to_csv(index=False).encode('utf-8')
-st.sidebar.download_button(
-    label="📥 Baixar Backup (Excel/CSV)",
-    data=csv_csv,
-    file_name='financas_backup.csv',
-    mime='text/csv',
-)
+st.sidebar.download_button("📥 Baixar Backup", csv_csv, 'financas_backup.csv', 'text/csv')
 
-# 4. GERADOR DE RECEITA
+# Gerador de Receita
 st.sidebar.divider()
 with st.sidebar.expander("💸 Gerar Renda Recorrente"):
     with st.form("form_receita"):
@@ -118,16 +107,16 @@ with st.sidebar.expander("💸 Gerar Renda Recorrente"):
                 df_final = pd.concat([df_atual, pd.DataFrame(lista)], ignore_index=True)
                 if salvar_dataframe_no_git(df_final): st.sidebar.success("Gerado!"); time.sleep(1.5); st.rerun()
 
-# Lógica de Filtro
 if mes_selecionado != "Todos":
     df_visualizacao = df[df['mes_ano'] == mes_selecionado]
 else:
     df_visualizacao = df
 
 # ==========================================
-# ÁREA PRINCIPAL
+# ÁREA PRINCIPAL - ABAS
 # ==========================================
-tab1, tab2, tab3 = st.tabs(["📊 Dashboard", "✍️ Lançar", "📂 Importar"])
+# ADICIONEI A ABA 4 AQUI
+tab1, tab2, tab3, tab4 = st.tabs(["📊 Dashboard", "✍️ Lançar", "📂 Importar", "📝 Editar/Excluir"])
 
 # === ABA 1: DASHBOARD ===
 with tab1:
@@ -136,62 +125,44 @@ with tab1:
         saida = df_visualizacao[df_visualizacao['tipo'] == 'SAIDA']['valor'].sum()
         saldo = entrada - saida
         
-        # --- NOVIDADE: CÁLCULO DA TAXA DE POUPANÇA ---
         taxa_poupanca = 0
-        if entrada > 0:
-            taxa_poupanca = (saldo / entrada) * 100
+        if entrada > 0: taxa_poupanca = (saldo / entrada) * 100
         
-        # Definição de Cor da Poupança
-        cor_poupanca = "off" # Cinza
+        cor_poupanca = "off"
         msg_poupanca = "Neutro"
-        if taxa_poupanca >= 20: 
-            cor_poupanca = "normal" # Verde
-            msg_poupanca = "🔥 Excelente! (>20%)"
-        elif taxa_poupanca > 0:
-            cor_poupanca = "off"
-            msg_poupanca = "👍 Positivo"
-        else:
-            cor_poupanca = "inverse" # Vermelho
-            msg_poupanca = "⚠️ Atenção"
-        # ---------------------------------------------
+        if taxa_poupanca >= 20: cor_poupanca = "normal"; msg_poupanca = "🔥 Excelente! (>20%)"
+        elif taxa_poupanca > 0: cor_poupanca = "off"; msg_poupanca = "👍 Positivo"
+        else: cor_poupanca = "inverse"; msg_poupanca = "⚠️ Atenção"
 
         st.caption(f"Período: **{mes_selecionado}**")
         c1, c2, c3, c4 = st.columns(4)
         c1.metric("Entradas", f"R$ {entrada:,.2f}")
         c2.metric("Saídas", f"R$ {saida:,.2f}")
         c3.metric("Saldo", f"R$ {saldo:,.2f}")
-        
-        # O Card de Poupança (Destaque)
-        c4.metric("💰 Taxa de Poupança", f"{taxa_poupanca:.1f}%", delta=msg_poupanca, delta_color=cor_poupanca)
+        c4.metric("💰 Poupança", f"{taxa_poupanca:.1f}%", delta=msg_poupanca, delta_color=cor_poupanca)
         
         st.divider()
 
-        # METAS DINÂMICAS
         st.subheader("🎯 Metas (Budget)")
         gastos_cat = df_visualizacao[df_visualizacao['tipo']=='SAIDA'].groupby('categoria')['valor'].sum()
         col_m1, col_m2 = st.columns(2)
-        
         for i, (cat, teto) in enumerate(metas.items()):
             gasto = gastos_cat.get(cat, 0.0)
             pct = min(gasto / teto, 1.0) if teto > 0 else 0
             col = col_m1 if i % 2 == 0 else col_m2
             with col:
-                cor = "green" if gasto <= teto else "red"
                 st.write(f"**{cat}**")
                 st.progress(pct)
                 resta = teto - gasto
-                if resta >= 0: st.caption(f"Resta: R$ {resta:,.2f} (Gasto: {gasto:,.0f}/{teto:,.0f})")
+                if resta >= 0: st.caption(f"Resta: R$ {resta:,.2f}")
                 else: st.caption(f":red[Estourou R$ {abs(resta):,.2f}!]")
 
         st.divider()
-
-        # EVOLUÇÃO
         st.subheader("📈 Evolução")
         df_evo = df.groupby(['mes_ano', 'tipo'])['valor'].sum().reset_index()
         fig = px.bar(df_evo, x='mes_ano', y='valor', color='tipo', barmode='group', color_discrete_map={'ENTRADA': '#00CC96', 'SAIDA': '#EF553B'})
         st.plotly_chart(fig, use_container_width=True)
 
-        # PIZZA E EXTRATO
         c_graf, c_tab = st.columns([1,1])
         with c_graf:
             if saida > 0:
@@ -199,11 +170,6 @@ with tab1:
                 st.plotly_chart(fig_p, use_container_width=True)
         with c_tab:
             st.dataframe(df_visualizacao[['data', 'descricao', 'valor', 'categoria']].sort_values('data', ascending=False), use_container_width=True, hide_index=True)
-            
-        with st.expander("🚨 Apagar Dados"):
-            if st.button("🗑️ RESET TOTAL"):
-                if salvar_dataframe_no_git(pd.DataFrame(columns=["data","descricao","categoria","quem","tipo","valor","origem"])):
-                    st.success("Zerado!"); time.sleep(2); st.rerun()
     else: st.info("Sem dados.")
 
 # === ABA 2: LANÇAR ===
@@ -270,3 +236,40 @@ with tab3:
                         if salvar_dataframe_no_git(fin): st.success("Feito!"); time.sleep(2); st.rerun()
             else: st.warning("Nada encontrado.")
         except Exception as e: st.error(f"Erro: {e}")
+
+# === ABA 4: EDITAR (NOVO!) ===
+with tab4:
+    st.header("📝 Editar Dados Existentes")
+    st.info("Aqui você pode corrigir salários, datas ou apagar lançamentos errados. As alterações são salvas direto no GitHub.")
+    
+    # Recarrega dados completos (sem filtro de data para poder editar tudo)
+    df_edit = ler_dados()
+    
+    if df_edit is not None and not df_edit.empty:
+        # Tabela Editável
+        df_alterado = st.data_editor(
+            df_edit,
+            column_config={
+                "data": st.column_config.DateColumn("Data", format="DD/MM/YYYY"),
+                "valor": st.column_config.NumberColumn("Valor", format="R$ %.2f"),
+                "categoria": st.column_config.SelectboxColumn("Categoria", options=["Mercado", "Lazer", "Casa", "Salário", "Transporte", "Saúde", "Contas Fixas", "Outros", "Investimento"]),
+                "tipo": st.column_config.SelectboxColumn("Tipo", options=["ENTRADA", "SAIDA"]),
+                "quem": st.column_config.SelectboxColumn("Quem", options=["Casal", "Ele", "Ela"])
+            },
+            num_rows="dynamic", # Permite adicionar e deletar linhas
+            use_container_width=True,
+            height=600
+        )
+        
+        st.write("---")
+        col_save1, col_save2 = st.columns([1,4])
+        
+        with col_save1:
+            if st.button("💾 SALVAR ALTERAÇÕES", type="primary"):
+                with st.spinner("Atualizando banco de dados..."):
+                    if salvar_dataframe_no_git(df_alterado):
+                        st.success("Dados atualizados com sucesso!")
+                        time.sleep(2)
+                        st.rerun()
+    else:
+        st.warning("Não há dados para editar.")
