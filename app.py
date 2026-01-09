@@ -160,10 +160,10 @@ with tab2:
                     st.success("Salvo!")
                     st.rerun()
 
-# === ABA 3: IMPORTAR NUBANK ===
+# === ABA 3: IMPORTAR NUBANK (FILTRO DE PAGAMENTO REFORÇADO) ===
 with tab3:
     st.header("📂 Importar Fatura Nubank")
-    st.markdown("Arraste o arquivo CSV aqui. O sistema ajusta sinais negativos automaticamente.")
+    st.markdown("Arraste o arquivo CSV aqui. O sistema remove pagamentos de fatura automaticamente.")
     
     uploaded_file = st.file_uploader("Solte o arquivo CSV aqui", type="csv")
 
@@ -184,9 +184,12 @@ with tab3:
                 cat_nubank = str(row.get('category', '')).title()
                 titulo = str(row.get('title', '')).title()
                 
-                # Ignora pagamento de fatura
-                if 'Pagamento' in titulo and 'Fatura' in titulo:
+                # --- FILTRO MAIS FORTE AQUI ---
+                # Se a categoria for pagamento OU o título tiver "Pagamento", a gente pula.
+                # Isso evita somar o pagamento da fatura como se fosse uma despesa.
+                if 'Pagamento' in cat_nubank or 'Pagamento' in titulo:
                     continue 
+                # ------------------------------
 
                 # Categorização Automática
                 cat_sugerida = "Outros"
@@ -201,7 +204,7 @@ with tab3:
                 elif 'Saúde' in cat_nubank or 'Farmacia' in titulo or 'Drogasil' in titulo:
                     cat_sugerida = 'Saúde'
 
-                # ✅ CORREÇÃO DE SINAL (ABS)
+                # Correção de Sinal
                 valor_corrigido = abs(float(row['amount']))
 
                 novos_dados.append({
@@ -215,15 +218,14 @@ with tab3:
             df_previa = pd.DataFrame(novos_dados)
 
             if not df_previa.empty:
-                # ✅ FIX DO ERRO DE DATA (RESET DE TIPO)
+                # Reset de Tipo de Data
                 df_previa['data'] = pd.to_datetime(df_previa['data'])
-                # --------------------------------------
 
                 total_fatura = df_previa['valor'].sum()
                 
                 c_total, c_aviso = st.columns([1, 2])
-                c_total.metric("Valor Fatura", f"R$ {total_fatura:,.2f}")
-                c_aviso.info(f"{len(df_previa)} itens encontrados.")
+                c_total.metric("Valor Fatura (Sem Pagamentos)", f"R$ {total_fatura:,.2f}")
+                c_aviso.info(f"{len(df_previa)} itens de despesa encontrados.")
                 
                 st.divider()
 
@@ -249,15 +251,12 @@ with tab3:
                 st.divider()
 
                 if st.button("✅ Confirmar Importação"):
-                    # Preenche campos automáticos
                     df_editado['quem'] = "Casal"
                     df_editado['origem'] = "Nubank"
-                    # Converte data de volta para Texto (String) para salvar limpo no CSV
                     df_editado['data'] = df_editado['data'].dt.strftime("%Y-%m-%d")
 
                     df_atual = ler_dados()
                     
-                    # Junta e remove duplicatas
                     df_final = pd.concat([df_atual, df_editado], ignore_index=True)
                     df_final = df_final.drop_duplicates(subset=['data', 'descricao', 'valor'])
                     
