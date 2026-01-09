@@ -82,7 +82,7 @@ with tab1:
         saida = df[df['tipo'] == 'SAIDA']['valor'].sum()
         saldo = entrada - saida
         
-        # Cálculo: SÓ NUBANK
+        # Cálculo: SÓ NUBANK (Origem = Nubank e Tipo = SAIDA)
         total_nubank = df[
             (df['tipo'] == 'SAIDA') & 
             (df['origem'] == 'Nubank')
@@ -121,7 +121,6 @@ with tab1:
         with st.expander("🚨 Zona de Perigo (Limpar Dados)"):
             st.warning("Cuidado: Isso apaga o arquivo CSV lá no GitHub para sempre.")
             if st.button("🗑️ APAGAR TODOS OS DADOS"):
-                # Cria um DataFrame vazio e salva por cima
                 empty_df = pd.DataFrame(columns=["data", "descricao", "categoria", "quem", "tipo", "valor", "origem"])
                 if salvar_dataframe_no_git(empty_df):
                     st.success("Tudo limpo! Começando do zero.")
@@ -164,7 +163,7 @@ with tab2:
 # === ABA 3: IMPORTAR NUBANK ===
 with tab3:
     st.header("📂 Importar Fatura Nubank")
-    st.markdown("Arraste o arquivo CSV aqui. O sistema soma a fatura e classifica os gastos.")
+    st.markdown("Arraste o arquivo CSV aqui. O sistema ajusta sinais negativos automaticamente.")
     
     uploaded_file = st.file_uploader("Solte o arquivo CSV aqui", type="csv")
 
@@ -202,12 +201,15 @@ with tab3:
                 elif 'Saúde' in cat_nubank or 'Farmacia' in titulo or 'Drogasil' in titulo:
                     cat_sugerida = 'Saúde'
 
+                # ✅ CORREÇÃO DE SINAL (ABS)
+                valor_corrigido = abs(float(row['amount']))
+
                 novos_dados.append({
                     "data": data_formatada,
                     "descricao": titulo,
                     "categoria": cat_sugerida,
                     "tipo": "SAIDA",
-                    "valor": float(row['amount'])
+                    "valor": valor_corrigido
                 })
             
             df_previa = pd.DataFrame(novos_dados)
@@ -250,7 +252,7 @@ with tab3:
                     # Preenche campos automáticos
                     df_editado['quem'] = "Casal"
                     df_editado['origem'] = "Nubank"
-                    # Converte data de volta para Texto para salvar no CSV limpo
+                    # Converte data de volta para Texto (String) para salvar limpo no CSV
                     df_editado['data'] = df_editado['data'].dt.strftime("%Y-%m-%d")
 
                     df_atual = ler_dados()
