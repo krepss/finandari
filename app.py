@@ -3,6 +3,7 @@ import pandas as pd
 from github import Github
 from io import StringIO
 import plotly.express as px
+import plotly.graph_objects as go # <--- NOVO: Para gráficos mais avançados
 from datetime import datetime
 import time
 
@@ -20,7 +21,6 @@ def get_github_repo():
     return g.get_repo(GITHUB_REPO)
 
 def ler_dados():
-    """Lê os dados do GitHub com proteção contra erro de datas."""
     try:
         repo = get_github_repo()
         try:
@@ -28,19 +28,13 @@ def ler_dados():
             csv_data = contents.decoded_content.decode("utf-8")
             df = pd.read_csv(StringIO(csv_data))
             
-            # Garante colunas mínimas
             if 'origem' not in df.columns: df['origem'] = 'Manual'
             if 'quem' not in df.columns: df['quem'] = 'Casal'
             
-            # --- CORREÇÃO DO ERRO DE DATA ---
             if not df.empty:
-                # O comando format='mixed' ensina o pandas a ler datas bagunçadas
-                # errors='coerce' diz: "se não for data de jeito nenhum, deixe em branco (NaT) mas NÃO TRAVE"
+                # format='mixed' e errors='coerce' salvam o dia se as datas estiverem bagunçadas
                 df['data'] = pd.to_datetime(df['data'], format='mixed', errors='coerce')
-                
-                # Removemos linhas que ficaram com data inválida (pra não sujar o gráfico)
-                df = df.dropna(subset=['data'])
-            # --------------------------------
+                df = df.dropna(subset=['data']) # Remove datas inválidas
             
             return df
             
@@ -57,14 +51,10 @@ def ler_dados():
 def salvar_dataframe_no_git(df_novo_completo):
     repo = get_github_repo()
     
-    # GARANTIA FINAL: Antes de salvar, converte todas as datas para texto simples YYYY-MM-DD
-    # Isso evita que o erro aconteça de novo no futuro
+    # Padroniza data para string antes de salvar
     if not df_novo_completo.empty:
-        # Se for data mesmo, converte. Se já for string, mantém.
-        try:
-            df_novo_completo['data'] = pd.to_datetime(df_novo_completo['data']).dt.strftime("%Y-%m-%d")
-        except:
-            pass # Se der erro, tenta salvar como está
+        try: df_novo_completo['data'] = pd.to_datetime(df_novo_completo['data']).dt.strftime("%Y-%m-%d")
+        except: pass
             
     novo_conteudo = df_novo_completo.to_csv(index=False)
     
@@ -83,7 +73,6 @@ def salvar_dataframe_no_git(df_novo_completo):
 # --- 3. INTERFACE ---
 st.title("💰 Finanças do Casal")
 
-# Carrega dados
 df = ler_dados()
 
 if df is None:
@@ -132,6 +121,7 @@ with st.sidebar.expander("Gerar Renda Recorrente"):
                 if salvar_dataframe_no_git(df_final):
                     st.sidebar.success("Gerado!"); time.sleep(1.5); st.rerun()
 
+# Aplica filtro para as métricas e tabelas
 if mes_selecionado != "Todos":
     df_visualizacao = df[df['mes_ano'] == mes_selecionado]
 else:
@@ -145,6 +135,7 @@ tab1, tab2, tab3 = st.tabs(["📊 Dashboard", "✍️ Lançar Manual", "📂 Imp
 # === ABA 1: DASHBOARD ===
 with tab1:
     if not df_visualizacao.empty:
+        # --- MÉTRICAS (Respeitam o filtro de mês) ---
         entrada = df_visualizacao[df_visualizacao['tipo'] == 'ENTRADA']['valor'].sum()
         saida = df_visualizacao[df_visualizacao['tipo'] == 'SAIDA']['valor'].sum()
         saldo = entrada - saida
@@ -154,18 +145,42 @@ with tab1:
         c1, c2, c3, c4 = st.columns(4)
         c1.metric("Entradas", f"R$ {entrada:,.2f}")
         c2.metric("Saídas", f"R$ {saida:,.2f}")
-        c3.metric("Saldo", f"R$ {saldo:,.2f}", delta_color="normal")
+        c3.metric("Saldo Líquido", f"R$ {saldo:,.2f}", delta_color="normal")
         c4.metric("🟣 Nubank", f"R$ {total_nubank:,.2f}")
         
         st.divider()
+
+        # --- GRÁFICO 1: EVOLUÇÃO (Longo Prazo) ---
+        # Este gráfico SEMPRE olha o histórico completo (df), independente do filtro
+        st.subheader("📈 Perspectiva de Longo Prazo")
+        
+        # Agrupa dados por Mês e Tipo (Entrada/Saída)
+        df_evolucao = df.groupby(['mes_ano', 'tipo'])['valor'].sum().reset_index()
+        
+        # Cria gráfico de barras lado a lado
+        fig_evol = px.bar(
+            df_evolucao, 
+            x='mes_ano', 
+            y='valor', 
+            color='tipo', 
+            barmode='group',
+            color_discrete_map={'ENTRADA': '#00CC96', 'SAIDA': '#EF553B'}, # Verde e Vermelho
+            title="Evolução Mensal: Quanto Entrou vs. Quanto Saiu",
+            text_auto='.2s'
+        )
+        st.plotly_chart(fig_evol, use_container_width=True)
+
+        st.divider()
+        
+        # --- GRÁFICO 2 e EXTRATO (Detalhes do período) ---
         col1, col2 = st.columns([1, 1])
         with col1:
             if saida > 0:
-                st.subheader("Categorias")
-                fig = px.pie(df_visualizacao[df_visualizacao['tipo'] == 'SAIDA'], values='valor', names='categoria', hole=0.4)
-                st.plotly_chart(fig, use_container_width=True)
+                st.subheader("Para onde foi o dinheiro?")
+                fig_pizza = px.pie(df_visualizacao[df_visualizacao['tipo'] == 'SAIDA'], values='valor', names='categoria', hole=0.4)
+                st.plotly_chart(fig_pizza, use_container_width=True)
             else:
-                st.info("Sem gastos.")
+                st.info("Sem gastos neste período.")
         with col2:
             st.subheader("Extrato")
             st.dataframe(df_visualizacao[['data', 'descricao', 'valor', 'tipo', 'origem']].sort_values('data', ascending=False), use_container_width=True, hide_index=True)
@@ -177,7 +192,7 @@ with tab1:
                 if salvar_dataframe_no_git(empty_df):
                     st.success("Limpo!"); time.sleep(2); st.rerun()
     else:
-        st.info("Nenhum dado.")
+        st.info("Nenhum dado. Comece importando ou lançando.")
 
 # === ABA 2: LANÇAMENTO MANUAL ===
 with tab2:
@@ -254,9 +269,7 @@ with tab3:
 
             df_previa = pd.DataFrame(novos_dados)
             if not df_previa.empty:
-                # Aqui também usamos 'mixed' para prevenir erros na prévia
                 df_previa['data'] = pd.to_datetime(df_previa['data'], format='mixed', errors='coerce')
-                
                 st.info(f"{len(df_previa)} itens encontrados.")
                 df_editado = st.data_editor(df_previa, column_config={"data":st.column_config.DateColumn("Data", format="DD/MM/YYYY"), "valor":st.column_config.NumberColumn("Valor", format="R$ %.2f")}, hide_index=True, num_rows="dynamic")
                 
@@ -265,8 +278,6 @@ with tab3:
                     if df_atual is not None:
                         df_editado['quem'] = "Casal"
                         if 'origem' not in df_editado.columns: df_editado['origem'] = "Importado"
-                        
-                        # Padroniza data antes de juntar
                         df_editado['data'] = df_editado['data'].dt.strftime("%Y-%m-%d")
                         
                         df_final = pd.concat([df_atual, df_editado], ignore_index=True)
