@@ -3,7 +3,6 @@ import pandas as pd
 from github import Github
 from io import StringIO
 import plotly.express as px
-import plotly.graph_objects as go # <--- NOVO: Para gráficos mais avançados
 from datetime import datetime
 import time
 
@@ -28,11 +27,12 @@ def ler_dados():
             csv_data = contents.decoded_content.decode("utf-8")
             df = pd.read_csv(StringIO(csv_data))
             
+            # Garante colunas mínimas
             if 'origem' not in df.columns: df['origem'] = 'Manual'
             if 'quem' not in df.columns: df['quem'] = 'Casal'
             
             if not df.empty:
-                # format='mixed' e errors='coerce' salvam o dia se as datas estiverem bagunçadas
+                # 'mixed' + 'coerce' evita erros com datas bagunçadas
                 df['data'] = pd.to_datetime(df['data'], format='mixed', errors='coerce')
                 df = df.dropna(subset=['data']) # Remove datas inválidas
             
@@ -79,7 +79,7 @@ if df is None:
     st.stop()
 
 # ==========================================
-# 🟣 BARRA LATERAL
+# 🟣 BARRA LATERAL (FILTROS E GERADOR)
 # ==========================================
 st.sidebar.header("🔍 Filtros")
 
@@ -135,13 +135,13 @@ tab1, tab2, tab3 = st.tabs(["📊 Dashboard", "✍️ Lançar Manual", "📂 Imp
 # === ABA 1: DASHBOARD ===
 with tab1:
     if not df_visualizacao.empty:
-        # --- MÉTRICAS (Respeitam o filtro de mês) ---
+        # --- MÉTRICAS ---
         entrada = df_visualizacao[df_visualizacao['tipo'] == 'ENTRADA']['valor'].sum()
         saida = df_visualizacao[df_visualizacao['tipo'] == 'SAIDA']['valor'].sum()
         saldo = entrada - saida
         total_nubank = df_visualizacao[(df_visualizacao['tipo'] == 'SAIDA') & (df_visualizacao['origem'] == 'Nubank')]['valor'].sum()
 
-        st.caption(f"Período: **{mes_selecionado}**")
+        st.caption(f"Período Visualizado: **{mes_selecionado}**")
         c1, c2, c3, c4 = st.columns(4)
         c1.metric("Entradas", f"R$ {entrada:,.2f}")
         c2.metric("Saídas", f"R$ {saida:,.2f}")
@@ -150,33 +150,66 @@ with tab1:
         
         st.divider()
 
-        # --- GRÁFICO 1: EVOLUÇÃO (Longo Prazo) ---
-        # Este gráfico SEMPRE olha o histórico completo (df), independente do filtro
-        st.subheader("📈 Perspectiva de Longo Prazo")
+        # ==========================================
+        # 🎯 PAINEL DE METAS (BUDGET)
+        # ==========================================
+        st.subheader("🎯 Metas de Gastos (Budget)")
+        st.caption("Acompanhe se você está dentro do limite estipulado para o mês.")
+
+        # --- DEFINA SUAS METAS AQUI ---
+        metas = {
+            "Mercado": 1500.00,
+            "Lazer": 800.00,
+            "Transporte": 500.00,
+            "Contas Fixas": 2000.00,
+            "Casa": 500.00
+        }
+        # ------------------------------
         
-        # Agrupa dados por Mês e Tipo (Entrada/Saída)
+        # Calcula quanto gastou em cada categoria neste mês
+        gastos_cat = df_visualizacao[df_visualizacao['tipo']=='SAIDA'].groupby('categoria')['valor'].sum()
+        
+        col_metas1, col_metas2 = st.columns(2)
+        
+        # Loop para criar as barras
+        for i, (categoria, teto) in enumerate(metas.items()):
+            gasto_atual = gastos_cat.get(categoria, 0.0)
+            
+            # Cálculo da porcentagem (trava em 100% pra barra não quebrar)
+            percentual = min(gasto_atual / teto, 1.0)
+            
+            # Define coluna (esquerda ou direita)
+            coluna_atual = col_metas1 if i % 2 == 0 else col_metas2
+            
+            with coluna_atual:
+                # Cor do texto muda se estourar
+                aviso = ""
+                if gasto_atual > teto:
+                    aviso = f"⚠️ Estourou R$ {gasto_atual - teto:,.2f}!"
+                
+                st.write(f"**{categoria}**")
+                st.progress(percentual)
+                st.caption(f"Gasto: R$ {gasto_atual:,.2f} / Meta: R$ {teto:,.2f}  {aviso}")
+
+        st.divider()
+
+        # --- GRÁFICO 1: EVOLUÇÃO ---
+        st.subheader("📈 Evolução Financeira")
         df_evolucao = df.groupby(['mes_ano', 'tipo'])['valor'].sum().reset_index()
-        
-        # Cria gráfico de barras lado a lado
         fig_evol = px.bar(
-            df_evolucao, 
-            x='mes_ano', 
-            y='valor', 
-            color='tipo', 
-            barmode='group',
-            color_discrete_map={'ENTRADA': '#00CC96', 'SAIDA': '#EF553B'}, # Verde e Vermelho
-            title="Evolução Mensal: Quanto Entrou vs. Quanto Saiu",
+            df_evolucao, x='mes_ano', y='valor', color='tipo', barmode='group',
+            color_discrete_map={'ENTRADA': '#00CC96', 'SAIDA': '#EF553B'},
             text_auto='.2s'
         )
         st.plotly_chart(fig_evol, use_container_width=True)
 
         st.divider()
         
-        # --- GRÁFICO 2 e EXTRATO (Detalhes do período) ---
+        # --- GRÁFICO 2 e EXTRATO ---
         col1, col2 = st.columns([1, 1])
         with col1:
             if saida > 0:
-                st.subheader("Para onde foi o dinheiro?")
+                st.subheader("Divisão de Gastos")
                 fig_pizza = px.pie(df_visualizacao[df_visualizacao['tipo'] == 'SAIDA'], values='valor', names='categoria', hole=0.4)
                 st.plotly_chart(fig_pizza, use_container_width=True)
             else:
