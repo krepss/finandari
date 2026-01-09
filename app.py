@@ -4,11 +4,12 @@ from github import Github
 from io import StringIO
 import plotly.express as px
 from datetime import datetime
+import time # <--- NOVO: Para a mensagem de confirmação não sumir rápido
 
 # --- 1. CONFIGURAÇÕES GERAIS ---
 st.set_page_config(page_title="Finanças do Casal", layout="wide", page_icon="💰")
 
-# ✅ SEU REPOSITÓRIO CORRETO
+# ✅ SEU REPOSITÓRIO
 GITHUB_REPO = "krepss/finandari" 
 ARQUIVO_CSV = "dados.csv"
 
@@ -79,6 +80,7 @@ with tab1:
         with col1:
             if saida > 0:
                 st.subheader("Categorias")
+                # Gráfico de Pizza (Donut)
                 fig = px.pie(df[df['tipo'] == 'SAIDA'], values='valor', names='categoria', hole=0.4)
                 st.plotly_chart(fig, use_container_width=True)
             else:
@@ -93,6 +95,7 @@ with tab1:
                 empty_df = pd.DataFrame(columns=["data", "descricao", "categoria", "quem", "tipo", "valor", "origem"])
                 if salvar_dataframe_no_git(empty_df):
                     st.success("Limpo!")
+                    time.sleep(2) # Espera 2s para você ler
                     st.rerun()
     else:
         st.info("Sem dados.")
@@ -115,9 +118,12 @@ with tab2:
                 "quem": quem, "tipo": tipo, "valor": valor, "origem": "Manual"
             }])
             df_final = pd.concat([ler_dados(), novo], ignore_index=True)
-            if salvar_dataframe_no_git(df_final):
-                st.success("Salvo!")
-                st.rerun()
+            
+            with st.spinner("Salvando..."):
+                if salvar_dataframe_no_git(df_final):
+                    st.success("✅ Gasto salvo com sucesso!")
+                    time.sleep(1.5) # <--- O SEGREDO: Espera 1.5s
+                    st.rerun()
 
 # === ABA 3: IMPORTAÇÃO (NUBANK E PLANILHA) ===
 with tab3:
@@ -161,24 +167,19 @@ with tab3:
             elif modelo == "Planilha Anual (Meses nas colunas)":
                 df_raw = pd.read_csv(uploaded_file)
                 
-                # Pega o ano da primeira coluna (ex: "2026")
+                # Pega o ano da primeira coluna
                 ano = df_raw.columns[0]
                 df_raw = df_raw.rename(columns={ano: 'descricao'})
-                
-                # Remove linha de TOTAL se existir
                 df_raw = df_raw[df_raw['descricao'] != 'TOTAL']
                 
-                # Transforma colunas de meses em linhas
                 df_melted = df_raw.melt(id_vars=['descricao'], var_name='mes', value_name='valor_str')
                 
                 mapa_mes = {'JAN':'01','FEV':'02','MAR':'03','ABR':'04','MAI':'05','JUN':'06',
                             'JUL':'07','AGO':'08','SET':'09','OUT':'10','NOV':'11','DEZ':'12'}
                 
                 for _, row in df_melted.iterrows():
-                    # Limpa valor (R$ 1.000,00 -> 1000.00)
                     val_str = str(row['valor_str'])
                     if val_str == 'nan' or val_str == '': continue
-                    
                     val_limpo = val_str.replace('R$','').replace('.','').replace(',','.').strip()
                     try:
                         valor_float = float(val_limpo)
@@ -186,17 +187,13 @@ with tab3:
                         continue
                         
                     if valor_float > 0:
-                        # Cria data (Dia 10 do mês)
                         mes_num = mapa_mes.get(row['mes'], '01')
                         data_final = f"{ano}-{mes_num}-10"
                         
                         novos_dados.append({
-                            "data": data_final,
-                            "descricao": row['descricao'],
-                            "categoria": "Contas Fixas", # Padrão para planilha
-                            "tipo": "SAIDA",
-                            "valor": valor_float,
-                            "origem": f"Planilha {ano}"
+                            "data": data_final, "descricao": row['descricao'],
+                            "categoria": "Contas Fixas", "tipo": "SAIDA",
+                            "valor": valor_float, "origem": f"Planilha {ano}"
                         })
 
             # --- EXIBIÇÃO DA PRÉVIA ---
@@ -220,18 +217,18 @@ with tab3:
                 
                 if st.button("✅ Confirmar Importação"):
                     df_editado['quem'] = "Casal"
-                    # Verifica se 'origem' existe, se não, preenche
                     if 'origem' not in df_editado.columns:
                         df_editado['origem'] = "Importado"
-                        
                     df_editado['data'] = df_editado['data'].dt.strftime("%Y-%m-%d")
                     
                     df_final = pd.concat([ler_dados(), df_editado], ignore_index=True)
                     df_final = df_final.drop_duplicates(subset=['data', 'descricao', 'valor'])
                     
-                    if salvar_dataframe_no_git(df_final):
-                        st.success("Importado com sucesso!")
-                        st.rerun()
+                    with st.spinner("Enviando dados..."):
+                        if salvar_dataframe_no_git(df_final):
+                            st.success("✅ Importação concluída com sucesso!")
+                            time.sleep(2) # <--- Espera 2s para você comemorar
+                            st.rerun()
             else:
                 st.warning("Nenhum dado válido encontrado.")
                 
