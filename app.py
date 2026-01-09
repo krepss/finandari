@@ -25,7 +25,7 @@ def ler_dados():
         csv_data = contents.decoded_content.decode("utf-8")
         df = pd.read_csv(StringIO(csv_data))
         
-        # --- CORREÇÃO AUTOMÁTICA DE COLUNAS ---
+        # Correção de colunas antigas
         if 'origem' not in df.columns:
             df['origem'] = 'Manual'
         if 'quem' not in df.columns:
@@ -38,230 +38,202 @@ def ler_dados():
 def salvar_dataframe_no_git(df_novo_completo):
     repo = get_github_repo()
     novo_conteudo = df_novo_completo.to_csv(index=False)
-    
     try:
         contents = repo.get_contents(ARQUIVO_CSV)
-        repo.update_file(
-            path=ARQUIVO_CSV,
-            message="Atualização via App Streamlit",
-            content=novo_conteudo,
-            sha=contents.sha
-        )
+        repo.update_file(path=ARQUIVO_CSV, message="Update via App", content=novo_conteudo, sha=contents.sha)
         return True
     except:
         try:
-            repo.create_file(
-                path=ARQUIVO_CSV,
-                message="Criando arquivo inicial",
-                content=novo_conteudo
-            )
+            repo.create_file(path=ARQUIVO_CSV, message="Init", content=novo_conteudo)
             return True
         except Exception as e:
-            st.error(f"Erro ao salvar no Git: {e}")
+            st.error(f"Erro ao salvar: {e}")
             return False
 
 # --- 3. INTERFACE ---
 st.title("💰 Finanças do Casal")
 
-tab1, tab2, tab3 = st.tabs(["📊 Dashboard", "✍️ Lançar Manual", "📂 Importar Nubank"])
+tab1, tab2, tab3 = st.tabs(["📊 Dashboard", "✍️ Lançar Manual", "📂 Importar Arquivos"])
 
 # === ABA 1: DASHBOARD ===
 with tab1:
     df = ler_dados()
-    
     if not df.empty:
         df['valor'] = pd.to_numeric(df['valor'])
         df['data'] = pd.to_datetime(df['data'])
         
-        # Cálculos
         entrada = df[df['tipo'] == 'ENTRADA']['valor'].sum()
         saida = df[df['tipo'] == 'SAIDA']['valor'].sum()
         saldo = entrada - saida
         
-        # SÓ NUBANK
-        total_nubank = df[
-            (df['tipo'] == 'SAIDA') & 
-            (df['origem'] == 'Nubank')
-        ]['valor'].sum()
+        total_nubank = df[(df['tipo'] == 'SAIDA') & (df['origem'] == 'Nubank')]['valor'].sum()
 
-        # Cards
         c1, c2, c3, c4 = st.columns(4)
         c1.metric("Entradas", f"R$ {entrada:,.2f}")
-        c2.metric("Saídas Totais", f"R$ {saida:,.2f}")
-        c3.metric("Saldo Geral", f"R$ {saldo:,.2f}")
-        c4.metric("🟣 Só Nubank", f"R$ {total_nubank:,.2f}", help="Total importado via CSV")
+        c2.metric("Saídas", f"R$ {saida:,.2f}")
+        c3.metric("Saldo", f"R$ {saldo:,.2f}")
+        c4.metric("🟣 Nubank", f"R$ {total_nubank:,.2f}")
         
         st.divider()
-        
         col1, col2 = st.columns([1, 1])
-        
         with col1:
             if saida > 0:
-                st.subheader("Gastos por Categoria")
-                df_saida = df[df['tipo'] == 'SAIDA']
-                
-                # ✅ CORREÇÃO DO GRÁFICO (PIE + HOLE = DONUT)
-                fig = px.pie(df_saida, values='valor', names='categoria', hole=0.4)
-                
+                st.subheader("Categorias")
+                fig = px.pie(df[df['tipo'] == 'SAIDA'], values='valor', names='categoria', hole=0.4)
                 st.plotly_chart(fig, use_container_width=True)
             else:
-                st.info("Sem saídas registradas.")
-                
+                st.info("Sem gastos.")
         with col2:
-            st.subheader("Extrato Detalhado")
-            st.dataframe(
-                df[['data', 'descricao', 'valor', 'categoria', 'origem']].sort_values('data', ascending=False), 
-                use_container_width=True, 
-                hide_index=True
-            )
+            st.subheader("Extrato")
+            st.dataframe(df.sort_values('data', ascending=False), use_container_width=True, hide_index=True)
             
-        # ZONA DE PERIGO
         st.divider()
-        with st.expander("🚨 Zona de Perigo (Limpar Dados)"):
-            if st.button("🗑️ APAGAR TODOS OS DADOS"):
+        with st.expander("🚨 Zona de Perigo"):
+            if st.button("🗑️ APAGAR TUDO"):
                 empty_df = pd.DataFrame(columns=["data", "descricao", "categoria", "quem", "tipo", "valor", "origem"])
                 if salvar_dataframe_no_git(empty_df):
-                    st.success("Tudo limpo! Começando do zero.")
+                    st.success("Limpo!")
                     st.rerun()
     else:
-        st.info("Nenhum dado encontrado.")
+        st.info("Sem dados.")
 
 # === ABA 2: LANÇAMENTO MANUAL ===
 with tab2:
-    st.header("Novo Gasto Avulso")
+    st.header("Novo Gasto")
     with st.form("form_manual", clear_on_submit=True):
-        col_form1, col_form2 = st.columns(2)
-        data = col_form1.date_input("Data", datetime.now())
-        descricao = col_form2.text_input("Descrição")
-        
+        c1, c2 = st.columns(2)
+        data = c1.date_input("Data", datetime.now())
+        descricao = c2.text_input("Descrição")
         categoria = st.selectbox("Categoria", ["Mercado", "Lazer", "Casa", "Salário", "Transporte", "Saúde", "Contas Fixas", "Outros"])
         quem = st.selectbox("Quem?", ["Casal", "Ele", "Ela"])
         tipo = st.radio("Tipo", ["SAIDA", "ENTRADA"], horizontal=True)
-        valor = st.number_input("Valor R$", min_value=0.0, step=0.01, format="%.2f")
+        valor = st.number_input("Valor", min_value=0.0, step=0.01, format="%.2f")
         
-        if st.form_submit_button("Salvar Manualmente"):
-            nova_linha = pd.DataFrame([{
-                "data": data.strftime("%Y-%m-%d"),
-                "descricao": descricao,
-                "categoria": categoria,
-                "quem": quem,
-                "tipo": tipo,
-                "valor": valor,
-                "origem": "Manual"
+        if st.form_submit_button("Salvar"):
+            novo = pd.DataFrame([{
+                "data": data.strftime("%Y-%m-%d"), "descricao": descricao, "categoria": categoria,
+                "quem": quem, "tipo": tipo, "valor": valor, "origem": "Manual"
             }])
-            
-            df_atual = ler_dados()
-            df_final = pd.concat([df_atual, nova_linha], ignore_index=True)
-            
-            with st.spinner("Enviando para o Git..."):
-                if salvar_dataframe_no_git(df_final):
-                    st.success("Salvo!")
-                    st.rerun()
+            df_final = pd.concat([ler_dados(), novo], ignore_index=True)
+            if salvar_dataframe_no_git(df_final):
+                st.success("Salvo!")
+                st.rerun()
 
-# === ABA 3: IMPORTAR NUBANK ===
+# === ABA 3: IMPORTAÇÃO (NUBANK E PLANILHA) ===
 with tab3:
-    st.header("📂 Importar Fatura Nubank")
-    st.markdown("Arraste o arquivo CSV aqui. O sistema remove pagamentos e ajusta sinais negativos.")
+    st.header("📂 Importar Arquivos")
     
-    uploaded_file = st.file_uploader("Solte o arquivo CSV aqui", type="csv")
+    # SELETOR DE MODELO
+    modelo = st.radio("Qual o modelo do arquivo?", ["Nubank (Fatura CSV)", "Planilha Anual (Meses nas colunas)"], horizontal=True)
+    
+    uploaded_file = st.file_uploader("Solte o CSV aqui", type="csv")
 
     if uploaded_file is not None:
         try:
-            df_nubank = pd.read_csv(uploaded_file)
             novos_dados = []
             
-            for index, row in df_nubank.iterrows():
-                # Tratamento Data
-                try:
-                    data_obj = pd.to_datetime(row['date'])
-                    data_formatada = data_obj.strftime("%Y-%m-%d")
-                except:
-                    data_formatada = datetime.now().strftime("%Y-%m-%d")
+            # --- MODELO 1: NUBANK ---
+            if modelo == "Nubank (Fatura CSV)":
+                df_raw = pd.read_csv(uploaded_file)
+                for _, row in df_raw.iterrows():
+                    try:
+                        dt = pd.to_datetime(row['date']).strftime("%Y-%m-%d")
+                    except:
+                        dt = datetime.now().strftime("%Y-%m-%d")
+                        
+                    desc = str(row.get('title', '')).title()
+                    cat = str(row.get('category', '')).title()
+                    
+                    if 'Pagamento' in desc or 'Pagamento' in cat: continue
+                    
+                    cat_final = "Outros"
+                    if 'Uber' in desc or 'Transporte' in cat: cat_final = 'Transporte'
+                    elif 'Mercado' in cat or 'Assai' in desc: cat_final = 'Mercado'
+                    elif 'Ifood' in desc or 'Restaurante' in cat: cat_final = 'Lazer'
+                    elif 'Netflix' in desc: cat_final = 'Contas Fixas'
+                    
+                    novos_dados.append({
+                        "data": dt, "descricao": desc, "categoria": cat_final,
+                        "tipo": "SAIDA", "valor": abs(float(row['amount'])), "origem": "Nubank"
+                    })
 
-                # Tratamento Texto
-                cat_nubank = str(row.get('category', '')).title()
-                titulo = str(row.get('title', '')).title()
+            # --- MODELO 2: PLANILHA ANUAL ---
+            elif modelo == "Planilha Anual (Meses nas colunas)":
+                df_raw = pd.read_csv(uploaded_file)
                 
-                # ✅ FILTRO DE PAGAMENTO: Ignora se tiver "Pagamento" no nome ou categoria
-                if 'Pagamento' in titulo or 'Pagamento' in cat_nubank:
-                    continue 
+                # Pega o ano da primeira coluna (ex: "2026")
+                ano = df_raw.columns[0]
+                df_raw = df_raw.rename(columns={ano: 'descricao'})
+                
+                # Remove linha de TOTAL se existir
+                df_raw = df_raw[df_raw['descricao'] != 'TOTAL']
+                
+                # Transforma colunas de meses em linhas
+                df_melted = df_raw.melt(id_vars=['descricao'], var_name='mes', value_name='valor_str')
+                
+                mapa_mes = {'JAN':'01','FEV':'02','MAR':'03','ABR':'04','MAI':'05','JUN':'06',
+                            'JUL':'07','AGO':'08','SET':'09','OUT':'10','NOV':'11','DEZ':'12'}
+                
+                for _, row in df_melted.iterrows():
+                    # Limpa valor (R$ 1.000,00 -> 1000.00)
+                    val_str = str(row['valor_str'])
+                    if val_str == 'nan' or val_str == '': continue
+                    
+                    val_limpo = val_str.replace('R$','').replace('.','').replace(',','.').strip()
+                    try:
+                        valor_float = float(val_limpo)
+                    except:
+                        continue
+                        
+                    if valor_float > 0:
+                        # Cria data (Dia 10 do mês)
+                        mes_num = mapa_mes.get(row['mes'], '01')
+                        data_final = f"{ano}-{mes_num}-10"
+                        
+                        novos_dados.append({
+                            "data": data_final,
+                            "descricao": row['descricao'],
+                            "categoria": "Contas Fixas", # Padrão para planilha
+                            "tipo": "SAIDA",
+                            "valor": valor_float,
+                            "origem": f"Planilha {ano}"
+                        })
 
-                # Categorização
-                cat_sugerida = "Outros"
-                if 'Transporte' in cat_nubank or 'Uber' in titulo or '99' in titulo or 'Posto' in titulo:
-                    cat_sugerida = 'Transporte'
-                elif 'Mercado' in cat_nubank or 'Supermercado' in cat_nubank or 'Assai' in titulo or 'Atacadao' in titulo:
-                    cat_sugerida = 'Mercado'
-                elif 'Restaurante' in cat_nubank or 'Ifood' in titulo or 'Burger' in titulo or 'Pizza' in titulo:
-                    cat_sugerida = 'Lazer'
-                elif 'Serviços' in cat_nubank or 'Streaming' in cat_nubank or 'Netflix' in titulo:
-                    cat_sugerida = 'Contas Fixas'
-                elif 'Saúde' in cat_nubank or 'Farmacia' in titulo or 'Drogasil' in titulo:
-                    cat_sugerida = 'Saúde'
-
-                # ✅ CORREÇÃO DE SINAL: Transforma negativo em positivo
-                valor_corrigido = abs(float(row['amount']))
-
-                novos_dados.append({
-                    "data": data_formatada,
-                    "descricao": titulo,
-                    "categoria": cat_sugerida,
-                    "tipo": "SAIDA",
-                    "valor": valor_corrigido
-                })
-            
+            # --- EXIBIÇÃO DA PRÉVIA ---
             df_previa = pd.DataFrame(novos_dados)
-
+            
             if not df_previa.empty:
-                # ✅ CORREÇÃO DE DATA (Evita erro no editor)
                 df_previa['data'] = pd.to_datetime(df_previa['data'])
-
-                total_fatura = df_previa['valor'].sum()
                 
-                c_total, c_aviso = st.columns([1, 2])
-                c_total.metric("Valor Fatura (Sem pagamentos)", f"R$ {total_fatura:,.2f}")
-                c_aviso.info(f"{len(df_previa)} lançamentos válidos encontrados.")
+                st.info(f"Foram encontrados {len(df_previa)} lançamentos.")
+                st.metric("Total a Importar", f"R$ {df_previa['valor'].sum():,.2f}")
                 
-                st.divider()
-
-                # Tabela Editável
                 df_editado = st.data_editor(
                     df_previa,
                     column_config={
-                        "categoria": st.column_config.SelectboxColumn(
-                            "Categoria",
-                            width="medium",
-                            options=["Mercado", "Lazer", "Casa", "Transporte", "Saúde", "Contas Fixas", "Outros"],
-                            required=True
-                        ),
-                        "descricao": st.column_config.TextColumn("Descrição"),
-                        "valor": st.column_config.NumberColumn("Valor R$", format="R$ %.2f"),
                         "data": st.column_config.DateColumn("Data", format="DD/MM/YYYY"),
-                        "tipo": st.column_config.TextColumn("Tipo", disabled=True)
+                        "valor": st.column_config.NumberColumn("Valor", format="R$ %.2f")
                     },
                     hide_index=True,
                     num_rows="dynamic"
                 )
                 
-                st.divider()
-
                 if st.button("✅ Confirmar Importação"):
                     df_editado['quem'] = "Casal"
-                    df_editado['origem'] = "Nubank"
-                    # Converte data de volta para texto para salvar no CSV
+                    # Verifica se 'origem' existe, se não, preenche
+                    if 'origem' not in df_editado.columns:
+                        df_editado['origem'] = "Importado"
+                        
                     df_editado['data'] = df_editado['data'].dt.strftime("%Y-%m-%d")
-
-                    df_atual = ler_dados()
                     
-                    df_final = pd.concat([df_atual, df_editado], ignore_index=True)
+                    df_final = pd.concat([ler_dados(), df_editado], ignore_index=True)
                     df_final = df_final.drop_duplicates(subset=['data', 'descricao', 'valor'])
                     
-                    with st.spinner("Salvando no Git..."):
-                        if salvar_dataframe_no_git(df_final):
-                            st.success(f"Fatura importada com sucesso!")
-                            st.rerun()
+                    if salvar_dataframe_no_git(df_final):
+                        st.success("Importado com sucesso!")
+                        st.rerun()
             else:
-                st.warning("Nenhum gasto válido encontrado.")
-            
+                st.warning("Nenhum dado válido encontrado.")
+                
         except Exception as e:
-            st.error(f"Erro ao processar arquivo: {e}")
+            st.error(f"Erro ao ler arquivo: {e}")
