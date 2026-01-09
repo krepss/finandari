@@ -86,3 +86,4 @@ data,descricao,categoria,quem,tipo,valor,origem,mes_ano
 2026-11-10,SANTANDER,Contas Fixas,Casal,SAIDA,99.9,Planilha 2026,
 2026-12-10,SANTANDER,Contas Fixas,Casal,SAIDA,99.9,Planilha 2026,
 2026-01-05,Salário Mensal,Salário,Casal,ENTRADA,4500.0,Previsão,
+2026-01-09,lanche,Outros,Casal,SAIDA,20.0,Manual,
