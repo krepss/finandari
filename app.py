@@ -237,39 +237,96 @@ with tab3:
             else: st.warning("Nada encontrado.")
         except Exception as e: st.error(f"Erro: {e}")
 
-# === ABA 4: EDITAR (NOVO!) ===
+# === ABA 4: EDITAR (TURBINADA) ===
 with tab4:
-    st.header("📝 Editar Dados Existentes")
-    st.info("Aqui você pode corrigir salários, datas ou apagar lançamentos errados. As alterações são salvas direto no GitHub.")
+    st.header("📝 Gestão de Lançamentos")
     
-    # Recarrega dados completos (sem filtro de data para poder editar tudo)
-    df_edit = ler_dados()
+    # 1. Carrega tudo primeiro
+    df_completo = ler_dados()
     
-    if df_edit is not None and not df_edit.empty:
-        # Tabela Editável
-        df_alterado = st.data_editor(
-            df_edit,
+    if df_completo is not None and not df_completo.empty:
+        # Cria coluna auxiliar para filtro de mês (caso não exista)
+        df_completo['mes_ano'] = pd.to_datetime(df_completo['data']).dt.strftime('%Y-%m')
+        
+        # --- PAINEL DE FILTROS ---
+        with st.expander("🔍 Filtros de Busca", expanded=True):
+            col_f1, col_f2, col_f3 = st.columns(3)
+            
+            # Filtro 1: Mês (Pega o da barra lateral ou deixa escolher outro)
+            lista_meses_edit = sorted(df_completo['mes_ano'].unique(), reverse=True)
+            filtro_mes = col_f1.selectbox("Filtrar por Mês", ["Todos"] + list(lista_meses_edit), index=0)
+            
+            # Filtro 2: Categoria
+            lista_cats = sorted(df_completo['categoria'].unique())
+            filtro_cat = col_f2.multiselect("Filtrar Categoria", lista_cats)
+            
+            # Filtro 3: Texto (Busca Inteligente)
+            filtro_texto = col_f3.text_input("Buscar (Ex: Salário, Uber)")
+        
+        # --- APLICAÇÃO DOS FILTROS ---
+        # Começa com tudo
+        df_filtrado = df_completo.copy()
+        
+        # Aplica Mês
+        if filtro_mes != "Todos":
+            df_filtrado = df_filtrado[df_filtrado['mes_ano'] == filtro_mes]
+            
+        # Aplica Categoria
+        if filtro_cat:
+            df_filtrado = df_filtrado[df_filtrado['categoria'].isin(filtro_cat)]
+            
+        # Aplica Busca de Texto (no título ou valor)
+        if filtro_texto:
+            df_filtrado = df_filtrado[
+                df_filtrado['descricao'].str.contains(filtro_texto, case=False, na=False) | 
+                df_filtrado['origem'].str.contains(filtro_texto, case=False, na=False)
+            ]
+            
+        # Ordena: Mais recente primeiro
+        df_filtrado = df_filtrado.sort_values(by='data', ascending=False)
+
+        st.caption(f"Exibindo **{len(df_filtrado)}** lançamentos de um total de {len(df_completo)}.")
+
+        # --- TABELA EDITÁVEL ---
+        df_editado = st.data_editor(
+            df_filtrado,
             column_config={
                 "data": st.column_config.DateColumn("Data", format="DD/MM/YYYY"),
                 "valor": st.column_config.NumberColumn("Valor", format="R$ %.2f"),
                 "categoria": st.column_config.SelectboxColumn("Categoria", options=["Mercado", "Lazer", "Casa", "Salário", "Transporte", "Saúde", "Contas Fixas", "Outros", "Investimento"]),
                 "tipo": st.column_config.SelectboxColumn("Tipo", options=["ENTRADA", "SAIDA"]),
-                "quem": st.column_config.SelectboxColumn("Quem", options=["Casal", "Ele", "Ela"])
+                "quem": st.column_config.SelectboxColumn("Quem", options=["Casal", "Ele", "Ela"]),
+                # Escondemos colunas técnicas para limpar a visão
+                "mes_ano": None 
             },
-            num_rows="dynamic", # Permite adicionar e deletar linhas
+            num_rows="dynamic",
             use_container_width=True,
-            height=600
+            height=500
         )
         
         st.write("---")
-        col_save1, col_save2 = st.columns([1,4])
         
-        with col_save1:
-            if st.button("💾 SALVAR ALTERAÇÕES", type="primary"):
-                with st.spinner("Atualizando banco de dados..."):
-                    if salvar_dataframe_no_git(df_alterado):
-                        st.success("Dados atualizados com sucesso!")
-                        time.sleep(2)
-                        st.rerun()
+        if st.button("💾 SALVAR ALTERAÇÕES", type="primary"):
+            # LÓGICA DE SALVAMENTO INTELIGENTE
+            # 1. Pega os dados que NÃO estavam no filtro (o "resto" do banco)
+            # Para isso, usamos o índice original para saber o que ficou de fora
+            indices_exibidos = df_filtrado.index
+            df_resto = df_completo.drop(indices_exibidos)
+            
+            # 2. Junta o "resto" com a "versão editada" do que estava na tela
+            df_final_para_salvar = pd.concat([df_resto, df_editado], ignore_index=True)
+            
+            # 3. Ordena tudo por data para ficar bonito
+            df_final_para_salvar = df_final_para_salvar.sort_values(by='data', ascending=False)
+            
+            # 4. Remove a coluna auxiliar antes de salvar
+            if 'mes_ano' in df_final_para_salvar.columns:
+                df_final_para_salvar = df_final_para_salvar.drop(columns=['mes_ano'])
+
+            with st.spinner("Atualizando banco de dados..."):
+                if salvar_dataframe_no_git(df_final_para_salvar):
+                    st.success("✅ Atualizado com sucesso!")
+                    time.sleep(2)
+                    st.rerun()
     else:
         st.warning("Não há dados para editar.")
