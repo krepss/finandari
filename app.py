@@ -8,7 +8,7 @@ from datetime import datetime
 # --- 1. CONFIGURAÇÕES GERAIS ---
 st.set_page_config(page_title="Finanças do Casal", layout="wide", page_icon="💰")
 
-# ⚠️ CONFIRA SEU REPOSITÓRIO AQUI
+# ✅ SEU REPOSITÓRIO CORRETO
 GITHUB_REPO = "krepss/finandari" 
 ARQUIVO_CSV = "dados.csv"
 
@@ -26,12 +26,15 @@ def ler_dados():
         df = pd.read_csv(StringIO(csv_data))
         
         # --- CORREÇÃO AUTOMÁTICA DE COLUNAS ---
-        # Se os dados antigos não tiverem a coluna 'origem', criamos agora
+        # Garante que o sistema não quebre se tiver dados antigos faltando colunas
         if 'origem' not in df.columns:
             df['origem'] = 'Manual'
+        if 'quem' not in df.columns:
+            df['quem'] = 'Casal'
             
         return df
     except:
+        # Retorna vazio se não existir arquivo ainda
         return pd.DataFrame(columns=["data", "descricao", "categoria", "quem", "tipo", "valor", "origem"])
 
 def salvar_dataframe_no_git(df_novo_completo):
@@ -39,6 +42,7 @@ def salvar_dataframe_no_git(df_novo_completo):
     novo_conteudo = df_novo_completo.to_csv(index=False)
     
     try:
+        # Tenta atualizar
         contents = repo.get_contents(ARQUIVO_CSV)
         repo.update_file(
             path=ARQUIVO_CSV,
@@ -48,6 +52,7 @@ def salvar_dataframe_no_git(df_novo_completo):
         )
         return True
     except:
+        # Se não existe, cria
         try:
             repo.create_file(
                 path=ARQUIVO_CSV,
@@ -72,25 +77,23 @@ with tab1:
         df['valor'] = pd.to_numeric(df['valor'])
         df['data'] = pd.to_datetime(df['data'])
         
-        # Filtros básicos
+        # Cálculos
         entrada = df[df['tipo'] == 'ENTRADA']['valor'].sum()
         saida = df[df['tipo'] == 'SAIDA']['valor'].sum()
         saldo = entrada - saida
         
-        # --- NOVIDADE: CÁLCULO SÓ DO NUBANK ---
-        # Filtra tudo que é SAIDA e que a origem é "Nubank"
+        # Cálculo: SÓ NUBANK
         total_nubank = df[
             (df['tipo'] == 'SAIDA') & 
             (df['origem'] == 'Nubank')
         ]['valor'].sum()
-        # --------------------------------------
 
-        # Mostra 4 cartões agora
+        # Cards
         c1, c2, c3, c4 = st.columns(4)
         c1.metric("Entradas", f"R$ {entrada:,.2f}")
         c2.metric("Saídas Totais", f"R$ {saida:,.2f}")
         c3.metric("Saldo Geral", f"R$ {saldo:,.2f}")
-        c4.metric("🟣 Só Nubank", f"R$ {total_nubank:,.2f}", help="Soma de tudo importado via CSV")
+        c4.metric("🟣 Só Nubank", f"R$ {total_nubank:,.2f}", help="Soma dos CSVs importados")
         
         st.divider()
         
@@ -102,17 +105,29 @@ with tab1:
                 df_saida = df[df['tipo'] == 'SAIDA']
                 fig = px.donut(df_saida, values='valor', names='categoria', hole=0.4)
                 st.plotly_chart(fig, use_container_width=True)
+            else:
+                st.info("Sem saídas registradas.")
                 
         with col2:
-            st.subheader("Últimos Lançamentos")
-            # Mostra a coluna 'origem' na tabela para você ver de onde veio
+            st.subheader("Extrato Detalhado")
             st.dataframe(
                 df[['data', 'descricao', 'valor', 'categoria', 'origem']].sort_values('data', ascending=False), 
                 use_container_width=True, 
                 hide_index=True
             )
+            
+        # --- ZONA DE PERIGO (RESET) ---
+        st.divider()
+        with st.expander("🚨 Zona de Perigo (Limpar Dados)"):
+            st.warning("Cuidado: Isso apaga o arquivo CSV lá no GitHub para sempre.")
+            if st.button("🗑️ APAGAR TODOS OS DADOS"):
+                # Cria um DataFrame vazio e salva por cima
+                empty_df = pd.DataFrame(columns=["data", "descricao", "categoria", "quem", "tipo", "valor", "origem"])
+                if salvar_dataframe_no_git(empty_df):
+                    st.success("Tudo limpo! Começando do zero.")
+                    st.rerun()
     else:
-        st.info("Sem dados ainda.")
+        st.info("Nenhum dado encontrado. Use as abas para começar.")
 
 # === ABA 2: LANÇAMENTO MANUAL ===
 with tab2:
@@ -135,13 +150,13 @@ with tab2:
                 "quem": quem,
                 "tipo": tipo,
                 "valor": valor,
-                "origem": "Manual" # <--- Carimbo de manual
+                "origem": "Manual"
             }])
             
             df_atual = ler_dados()
             df_final = pd.concat([df_atual, nova_linha], ignore_index=True)
             
-            with st.spinner("Salvando..."):
+            with st.spinner("Enviando para o Git..."):
                 if salvar_dataframe_no_git(df_final):
                     st.success("Salvo!")
                     st.rerun()
@@ -149,7 +164,7 @@ with tab2:
 # === ABA 3: IMPORTAR NUBANK ===
 with tab3:
     st.header("📂 Importar Fatura Nubank")
-    st.markdown("Arraste o arquivo CSV da fatura aqui.")
+    st.markdown("Arraste o arquivo CSV aqui. O sistema soma a fatura e classifica os gastos.")
     
     uploaded_file = st.file_uploader("Solte o arquivo CSV aqui", type="csv")
 
@@ -170,10 +185,11 @@ with tab3:
                 cat_nubank = str(row.get('category', '')).title()
                 titulo = str(row.get('title', '')).title()
                 
+                # Ignora pagamento de fatura
                 if 'Pagamento' in titulo and 'Fatura' in titulo:
                     continue 
 
-                # Categorização
+                # Categorização Automática
                 cat_sugerida = "Outros"
                 if 'Transporte' in cat_nubank or 'Uber' in titulo or '99' in titulo or 'Posto' in titulo:
                     cat_sugerida = 'Transporte'
@@ -197,14 +213,19 @@ with tab3:
             df_previa = pd.DataFrame(novos_dados)
 
             if not df_previa.empty:
+                # ✅ FIX DO ERRO DE DATA (RESET DE TIPO)
                 df_previa['data'] = pd.to_datetime(df_previa['data'])
+                # --------------------------------------
+
                 total_fatura = df_previa['valor'].sum()
                 
                 c_total, c_aviso = st.columns([1, 2])
-                c_total.metric("Valor Total Fatura", f"R$ {total_fatura:,.2f}")
+                c_total.metric("Valor Fatura", f"R$ {total_fatura:,.2f}")
+                c_aviso.info(f"{len(df_previa)} itens encontrados.")
                 
                 st.divider()
 
+                # Tabela Editável
                 df_editado = st.data_editor(
                     df_previa,
                     column_config={
@@ -226,21 +247,24 @@ with tab3:
                 st.divider()
 
                 if st.button("✅ Confirmar Importação"):
+                    # Preenche campos automáticos
                     df_editado['quem'] = "Casal"
-                    df_editado['origem'] = "Nubank" # <--- Carimbo de Nubank
+                    df_editado['origem'] = "Nubank"
+                    # Converte data de volta para Texto para salvar no CSV limpo
                     df_editado['data'] = df_editado['data'].dt.strftime("%Y-%m-%d")
 
                     df_atual = ler_dados()
                     
+                    # Junta e remove duplicatas
                     df_final = pd.concat([df_atual, df_editado], ignore_index=True)
                     df_final = df_final.drop_duplicates(subset=['data', 'descricao', 'valor'])
                     
                     with st.spinner("Salvando no Git..."):
                         if salvar_dataframe_no_git(df_final):
-                            st.success(f"Sucesso! Fatura de R$ {total_fatura:,.2f} salva.")
+                            st.success(f"Fatura importada com sucesso!")
                             st.rerun()
             else:
-                st.warning("O arquivo não tinha transações válidas.")
+                st.warning("O arquivo não contém gastos válidos.")
             
         except Exception as e:
-            st.error(f"Erro ao ler CSV: {e}")
+            st.error(f"Erro ao processar arquivo: {e}")
